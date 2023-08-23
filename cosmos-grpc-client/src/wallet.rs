@@ -104,11 +104,11 @@ impl Wallet {
         fee: Option<Fee>,
         memo: Option<String>,
         broadacast_mode: BroadcastMode,
-    ) -> BroadcastTxResponse {
+    ) -> StdResult<BroadcastTxResponse> {
         let fee = if fee.is_none() {
             let gas_used = self
                 .simulate_tx(client, msgs.clone())
-                .await
+                .await?
                 .gas_info
                 .unwrap()
                 .gas_used;
@@ -135,17 +135,17 @@ impl Wallet {
             mode: broadacast_mode.repr(),
         };
 
-        client
+        Ok(client
             .clients
             .tx
             .broadcast_tx(request)
             .await
-            .unwrap()
-            .into_inner()
+            .into_std_result()?
+            .into_inner())
     }
 
     #[allow(deprecated)]
-    pub async fn simulate_tx(&self, client: &mut GrpcClient, msgs: Vec<Any>) -> SimulateResponse {
+    pub async fn simulate_tx(&self, client: &mut GrpcClient, msgs: Vec<Any>) -> StdResult<SimulateResponse> {
         let tx = self.create_tx(
             msgs,
             Fee {
@@ -162,13 +162,13 @@ impl Wallet {
             tx_bytes: tx.to_bytes().unwrap(),
         };
 
-        client
+        Ok(client
             .clients
             .tx
             .simulate(request)
             .await
-            .unwrap()
-            .into_inner()
+            .into_std_result()?
+            .into_inner())
     }
 
     fn create_tx(&self, msgs: Vec<Any>, fee: Fee, memo: Option<String>) -> Raw {
@@ -234,6 +234,6 @@ mod test {
 
         wallet
             .simulate_tx(&mut client, vec![msg.to_any().unwrap()])
-            .await;
+            .await.unwrap();
     }
 }

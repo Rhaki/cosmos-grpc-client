@@ -235,9 +235,7 @@ mod test {
     pub async fn test_contracts_by_code() {
         let mut client = GrpcClient::new(TERRA_GRPC).await.unwrap();
 
-        let res = client.wasm_get_contracts_from_code_id(71).await.unwrap();
-
-        println!("{res:#?}")
+        let _res = client.wasm_get_contracts_from_code_id(71).await.unwrap();
     }
 
     #[test]

@@ -18,3 +18,5 @@ cargo.lock
 *.iml
 .idea
 .vscode
+
+/mock_test
