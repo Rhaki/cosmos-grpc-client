@@ -12,9 +12,10 @@ Grpc client interface with wallet abstraction to perform queries, build, sign an
 use std::str::FromStr;
 
 use cosmos_grpc_client::{
-    GrpcClient,
+    GrpcClient, Wallet, CoinType, Decimal, BroadcastMode
     cosmos_sdk_proto::{cosmos::{bank::v1beta1::{QueryBalanceRequest, QueryBalanceResponse, MsgSend}, base::v1beta1::Coin}, traits::Message},
-    osmosis_std::types::osmosis::{poolmanager::v1beta1::{PoolRequest, PoolResponse}, gamm::v1beta1::Pool}, Wallet, CoinType, Decimal, cosmrs::tx::MessageExt, BroadcastMode
+    osmosis_std::types::osmosis::{poolmanager::v1beta1::{PoolRequest, PoolResponse}, gamm::v1beta1::Pool},
+    cosmrs::tx::MessageExt,
 };
 
 #[tokio::main]
@@ -35,7 +36,7 @@ async fn _main() {
 
     assert_eq!(response, c_response);
 
-    // `general_query()`` is used to query to perform query for a custom module or any module
+    // `general_query()` is used to perform query for a custom module or any module
     // Query pool type from osmosis pool manager module
     let request = PoolRequest { pool_id: 1 };
     let response: PoolResponse = client.general_query(request, "/osmosis.poolmanager.v1beta1.Query/Pool").await.unwrap();
@@ -67,7 +68,8 @@ async fn _main() {
     }.to_any().unwrap();
 
     let response = wallet.broadcast_tx(
-        &mut client, vec![msg], // Vec<Any>: list of msg to broadcast
+        &mut client,
+        vec![msg],              // Vec<Any>: list of msgs to broadcast
         None,                   // memo: Option<String>
         None,                   // fee: Option<Fee>, if not provided the tx is simulated to calculate the fee
         BroadcastMode::Sync     // Broadcast mode; Block/Sync/Async
