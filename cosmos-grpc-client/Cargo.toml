@@ -1,0 +1,32 @@
+[package]
+name             = "cosmos-grpc-client"
+version          = "0.1.0"
+edition          = "2021"
+authors          = ["Rhaki"]
+description      = "Cosmos grpc client with wallet integration"
+license          = "Apache-2.0"
+repository       = "https://github.com/Rhaki/inter-chain-gate-core"
+
+[features]
+osmosis = []
+
+[dependencies]
+cosmrs           = {workspace=true}
+cosmos-sdk-proto = {workspace=true}
+
+bip32            = {workspace=true}
+bip39            = {workspace=true}
+hdpath           = {workspace=true}
+
+cosmwasm-std     = {workspace=true}
+cosmwasm-schema  = {workspace=true}
+
+tokio            = {workspace=true}
+tonic            = {workspace=true}
+
+serde            = {workspace=true}
+serde_json       = {workspace=true}
+enum-repr        = {workspace=true}
+
+osmosis-std      = {workspace=true}
+
