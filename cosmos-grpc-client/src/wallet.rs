@@ -1,4 +1,6 @@
-use std::str::FromStr;
+use std::{fmt::Debug, str::FromStr};
+
+use protobuf::Message;
 
 use bip39::Mnemonic;
 use cosmwasm_std::{Decimal, StdResult, Uint128};
@@ -12,12 +14,14 @@ use cosmos_sdk_proto::{
     traits::MessageExt,
     Any,
 };
+use injective_protobuf::proto::account::EthAccount;
 
 use crate::{
     client::GrpcClient,
     definitions::BroadcastMode,
     errors::IntoStdResult,
     math::{IntoU64, IntoUint128},
+    CoinType,
 };
 
 use cosmrs::{
@@ -44,7 +48,7 @@ impl Wallet {
         client: &mut GrpcClient,
         seed_phrase: impl Into<String> + Clone,
         chain_prefix: impl Into<String> + Clone,
-        coin_type: impl Into<u64>,
+        coin_type: impl Into<u64> + Clone,
         account_index: u64,
         gas_price: Decimal,
         gas_adjustment: Decimal,
@@ -56,12 +60,12 @@ impl Wallet {
 
         let derivation_path = bip32::DerivationPath::from_str(&format!(
             "m/44'/{}'/0'/0/{account_index}",
-            coin_type.into()
+            coin_type.clone().into()
         ))
         .into_std_result()?;
         let sign_key = SigningKey::derive_from_path(seed, &derivation_path).into_std_result()?;
 
-        let res = client
+        let raw_res = client
             .clients
             .auth
             .account(QueryAccountRequest {
@@ -75,14 +79,27 @@ impl Wallet {
             .into_std_result()?
             .into_inner();
 
-        let res = BaseAccount::from_any(&res.account.unwrap()).unwrap();
+        let (number, sequence) = match CoinType::from_repr(coin_type.into()) {
+            Some(CoinType::Injective) => {
+                let res = EthAccount::parse_from_bytes(raw_res.account.unwrap().value.as_slice())
+                    .into_std_result()?
+                    .base_account
+                    .unwrap();
+
+                (res.account_number, res.sequence)
+            }
+            _ => {
+                let res = BaseAccount::from_any(&raw_res.account.unwrap()).unwrap();
+                (res.account_number, res.sequence)
+            }
+        };
 
         Ok(Wallet {
             chain_id: client.chain_id.clone(),
             prefix: chain_prefix.into(),
             sign_key,
-            account_number: res.account_number,
-            account_sequence: res.sequence,
+            account_number: number,
+            account_sequence: sequence,
             gas_price,
             gas_adjustment,
             gas_denom: gas_denom.into(),
@@ -145,7 +162,11 @@ impl Wallet {
     }
 
     #[allow(deprecated)]
-    pub async fn simulate_tx(&self, client: &mut GrpcClient, msgs: Vec<Any>) -> StdResult<SimulateResponse> {
+    pub async fn simulate_tx(
+        &self,
+        client: &mut GrpcClient,
+        msgs: Vec<Any>,
+    ) -> StdResult<SimulateResponse> {
         let tx = self.create_tx(
             msgs,
             Fee {
@@ -192,6 +213,20 @@ impl Wallet {
     }
 }
 
+impl Debug for Wallet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Wallet")
+            .field("chain_id", &self.chain_id)
+            .field("prefix", &self.prefix)
+            .field("account_number", &self.account_number)
+            .field("account_sequence", &self.account_sequence)
+            .field("gas_price", &self.gas_price)
+            .field("gas_adjustment", &self.gas_adjustment)
+            .field("gas_denom", &self.gas_denom)
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::str::FromStr;
@@ -234,6 +269,7 @@ mod test {
 
         wallet
             .simulate_tx(&mut client, vec![msg.to_any().unwrap()])
-            .await.unwrap();
+            .await
+            .unwrap();
     }
 }
