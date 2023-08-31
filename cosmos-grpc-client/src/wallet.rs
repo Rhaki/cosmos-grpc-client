@@ -40,6 +40,7 @@ pub struct Wallet {
     pub gas_price: Decimal,
     pub gas_adjustment: Decimal,
     pub gas_denom: String,
+    pub derivation_path: String,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -103,6 +104,7 @@ impl Wallet {
             gas_price,
             gas_adjustment,
             gas_denom: gas_denom.into(),
+            derivation_path: derivation_path.to_string(),
         })
     }
 
@@ -216,6 +218,7 @@ impl Wallet {
 impl Debug for Wallet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Wallet")
+            .field("account_address", &self.account_address())
             .field("chain_id", &self.chain_id)
             .field("prefix", &self.prefix)
             .field("account_number", &self.account_number)
@@ -223,6 +226,7 @@ impl Debug for Wallet {
             .field("gas_price", &self.gas_price)
             .field("gas_adjustment", &self.gas_adjustment)
             .field("gas_denom", &self.gas_denom)
+            .field("derivatio_path", &self.derivation_path)
             .finish()
     }
 }
