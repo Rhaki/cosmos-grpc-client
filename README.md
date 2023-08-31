@@ -1,6 +1,6 @@
 # Cosmos Grpc Client
 
-Grpc client interface with wallet abstraction to perform queries, build, sign and transaction within a single packages.
+Grpc client interface with wallet abstraction to perform queries, build and sign transaction within a single packages.
 
 ### Package
 [![cw1 on crates.io](https://img.shields.io/crates/v/cosmos-grpc-client.svg)](https://crates.io/crates/cosmos-grpc-client)
