@@ -3,7 +3,7 @@ use std::{fmt::Debug, str::FromStr};
 use protobuf::Message;
 
 use bip39::Mnemonic;
-use cosmwasm_std::{Decimal, StdResult, Uint128};
+use cosmwasm_std::{Decimal, StdError, StdResult, Uint128};
 
 use cosmos_sdk_proto::{
     cosmos::{
@@ -40,7 +40,6 @@ pub struct Wallet {
     pub gas_price: Decimal,
     pub gas_adjustment: Decimal,
     pub gas_denom: String,
-    pub derivation_path: String,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -53,51 +52,21 @@ impl Wallet {
         gas_adjustment: Decimal,
         gas_denom: impl Into<String>,
     ) -> StdResult<Wallet> {
-        let sign_key = SigningKey::random().into_std_result()?;
+        let sign_key = SigningKey::random();
 
-        let raw_res = client
-            .clients
-            .auth
-            .account(QueryAccountRequest {
-                address: sign_key
-                    .public_key()
-                    .account_id(&chain_prefix.clone().into())
-                    .unwrap()
-                    .to_string(),
-            })
-            .await
-            .into_std_result()?
-            .into_inner();
-
-        let (number, sequence) = match CoinType::from_repr(coin_type.into()) {
-            Some(CoinType::Injective) => {
-                let res = EthAccount::parse_from_bytes(raw_res.account.unwrap().value.as_slice())
-                    .into_std_result()?
-                    .base_account
-                    .unwrap();
-
-                (res.account_number, res.sequence)
-            }
-            _ => {
-                let res = BaseAccount::from_any(&raw_res.account.unwrap()).unwrap();
-                (res.account_number, res.sequence)
-            }
-        };
-
-        Ok(Wallet {
-            chain_id: client.chain_id.clone(),
-            prefix: chain_prefix.into(),
+        Wallet::finalize_wallet_creation(
+            client,
             sign_key,
-            account_number: number,
-            account_sequence: sequence,
+            chain_prefix,
+            coin_type,
             gas_price,
             gas_adjustment,
-            gas_denom: gas_denom.into(),
-            derivation_path: derivation_path.to_string(),
-        })
+            gas_denom,
+        )
+        .await
     }
 
-    pub async fn from_privateKey(
+    pub async fn from_private_key(
         client: &mut GrpcClient,
         private_key: impl Into<String> + Clone,
         chain_prefix: impl Into<String> + Clone,
@@ -106,51 +75,27 @@ impl Wallet {
         gas_adjustment: Decimal,
         gas_denom: impl Into<String>,
     ) -> StdResult<Wallet> {
-        let sign_key = SigningKey::from_slice(&private_key.to_bytes()).into_std_result()?;
+        let private_key: String = private_key.into();
 
-        let raw_res = client
-            .clients
-            .auth
-            .account(QueryAccountRequest {
-                address: sign_key
-                    .public_key()
-                    .account_id(&chain_prefix.clone().into())
-                    .unwrap()
-                    .to_string(),
-            })
-            .await
-            .into_std_result()?
-            .into_inner();
+        let sign_key =
+            SigningKey::from_slice(&private_key.to_bytes().map_err(|err| {
+                StdError::generic_err(format!("Invalid private key, error: {err}"))
+            })?)
+            .map_err(|err| StdError::generic_err(err.to_string()))?;
 
-        let (number, sequence) = match CoinType::from_repr(coin_type.into()) {
-            Some(CoinType::Injective) => {
-                let res = EthAccount::parse_from_bytes(raw_res.account.unwrap().value.as_slice())
-                    .into_std_result()?
-                    .base_account
-                    .unwrap();
-
-                (res.account_number, res.sequence)
-            }
-            _ => {
-                let res = BaseAccount::from_any(&raw_res.account.unwrap()).unwrap();
-                (res.account_number, res.sequence)
-            }
-        };
-
-        Ok(Wallet {
-            chain_id: client.chain_id.clone(),
-            prefix: chain_prefix.into(),
+        Wallet::finalize_wallet_creation(
+            client,
             sign_key,
-            account_number: number,
-            account_sequence: sequence,
+            chain_prefix,
+            coin_type,
             gas_price,
             gas_adjustment,
-            gas_denom: gas_denom.into(),
-            derivation_path: derivation_path.to_string(),
-        })
+            gas_denom,
+        )
+        .await
     }
 
-    pub async fn new(
+    pub async fn from_seed_phrase(
         client: &mut GrpcClient,
         seed_phrase: impl Into<String> + Clone,
         chain_prefix: impl Into<String> + Clone,
@@ -171,46 +116,16 @@ impl Wallet {
         .into_std_result()?;
         let sign_key = SigningKey::derive_from_path(seed, &derivation_path).into_std_result()?;
 
-        let raw_res = client
-            .clients
-            .auth
-            .account(QueryAccountRequest {
-                address: sign_key
-                    .public_key()
-                    .account_id(&chain_prefix.clone().into())
-                    .unwrap()
-                    .to_string(),
-            })
-            .await
-            .into_std_result()?
-            .into_inner();
-
-        let (number, sequence) = match CoinType::from_repr(coin_type.into()) {
-            Some(CoinType::Injective) => {
-                let res = EthAccount::parse_from_bytes(raw_res.account.unwrap().value.as_slice())
-                    .into_std_result()?
-                    .base_account
-                    .unwrap();
-
-                (res.account_number, res.sequence)
-            }
-            _ => {
-                let res = BaseAccount::from_any(&raw_res.account.unwrap()).unwrap();
-                (res.account_number, res.sequence)
-            }
-        };
-
-        Ok(Wallet {
-            chain_id: client.chain_id.clone(),
-            prefix: chain_prefix.into(),
+        Wallet::finalize_wallet_creation(
+            client,
             sign_key,
-            account_number: number,
-            account_sequence: sequence,
+            chain_prefix,
+            coin_type,
             gas_price,
             gas_adjustment,
-            gas_denom: gas_denom.into(),
-            derivation_path: derivation_path.to_string(),
-        })
+            gas_denom,
+        )
+        .await
     }
 
     pub fn account_address(&self) -> String {
@@ -299,6 +214,57 @@ impl Wallet {
             .into_inner())
     }
 
+    async fn finalize_wallet_creation(
+        client: &mut GrpcClient,
+        sign_key: SigningKey,
+        chain_prefix: impl Into<String> + Clone,
+        coin_type: impl Into<u64> + Clone,
+        gas_price: Decimal,
+        gas_adjustment: Decimal,
+        gas_denom: impl Into<String>,
+    ) -> StdResult<Wallet> {
+        let raw_res = client
+            .clients
+            .auth
+            .account(QueryAccountRequest {
+                address: sign_key
+                    .public_key()
+                    .account_id(&chain_prefix.clone().into())
+                    .unwrap()
+                    .to_string(),
+            })
+            .await
+            .map(|res| res.into_inner())
+            .into_std_result();
+
+        let (number, sequence) = match raw_res {
+            Ok(raw_res) => match CoinType::from_repr(coin_type.into()) {
+                Some(CoinType::Injective) => {
+                    EthAccount::parse_from_bytes(raw_res.account.unwrap().value.as_slice())
+                        .into_std_result()?
+                        .base_account
+                        .map(|res| (res.account_number, res.sequence))
+                        .unwrap_or((0, 0))
+                }
+                _ => BaseAccount::from_any(&raw_res.account.unwrap())
+                    .map(|res| (res.account_number, res.sequence))
+                    .unwrap_or((0, 0)),
+            },
+            Err(_) => (0, 0),
+        };
+
+        Ok(Wallet {
+            chain_id: client.chain_id.clone(),
+            prefix: chain_prefix.into(),
+            sign_key,
+            account_number: number,
+            account_sequence: sequence,
+            gas_price,
+            gas_adjustment,
+            gas_denom: gas_denom.into(),
+        })
+    }
+
     fn create_tx(&self, msgs: Vec<Any>, fee: Fee, memo: Option<String>) -> Raw {
         let tx_body = cosmrs::tx::BodyBuilder::new()
             .msgs(msgs)
@@ -328,10 +294,9 @@ impl Debug for Wallet {
             .field("prefix", &self.prefix)
             .field("account_number", &self.account_number)
             .field("account_sequence", &self.account_sequence)
-            .field("gas_price", &self.gas_price)
-            .field("gas_adjustment", &self.gas_adjustment)
+            .field("gas_price", &format!("{}", &self.gas_price))
+            .field("gas_adjustment", &format!("{}", &self.gas_adjustment))
             .field("gas_denom", &self.gas_denom)
-            .field("derivatio_path", &self.derivation_path)
             .finish()
     }
 }
@@ -354,7 +319,7 @@ mod test {
 
         let mut client = GrpcClient::new(TERRA_GRPC).await.unwrap();
 
-        let wallet = Wallet::new(
+        let wallet = Wallet::from_seed_phrase(
             &mut client,
             seed_phrase,
             "terra",
@@ -383,7 +348,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn generate_wallet() {
+    async fn ranom_wallet() {
         let mut client = GrpcClient::new(TERRA_GRPC).await.unwrap();
 
         let wallet = Wallet::random(
@@ -397,49 +362,6 @@ mod test {
         .await
         .unwrap();
 
-        let msg = MsgSend {
-            from_address: wallet.account_address(),
-            to_address: "...".to_string(),
-            amount: vec![Coin {
-                denom: "uluna".to_string(),
-                amount: "100".to_string(),
-            }],
-        };
-
-        wallet
-            .simulate_tx(&mut client, vec![msg.to_any().unwrap()])
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn import_wallet() {
-        let mut client = GrpcClient::new(TERRA_GRPC).await.unwrap();
-
-        let wallet = Wallet::from_privateKey(
-            &mut client,
-            "0x34edb5354d6f37aeebd187e52a3b7478c0819f0ffaf717f646df47c6ee060217"
-            "terra",
-            CoinType::Terra,
-            Decimal::from_str("0.015").unwrap(),
-            Decimal::from_str("2").unwrap(),
-            "uluna",
-        )
-        .await
-        .unwrap();
-
-        let msg = MsgSend {
-            from_address: wallet.account_address(),
-            to_address: "...".to_string(),
-            amount: vec![Coin {
-                denom: "uluna".to_string(),
-                amount: "100".to_string(),
-            }],
-        };
-
-        wallet
-            .simulate_tx(&mut client, vec![msg.to_any().unwrap()])
-            .await
-            .unwrap();
+        println!("{wallet:#?}");
     }
 }

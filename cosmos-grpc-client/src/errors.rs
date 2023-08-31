@@ -10,6 +10,7 @@ pub trait IntoStdError: std::error::Error {
 pub trait IntoStdResult<T> {
     fn into_std_result(self) -> StdResult<T>;
 }
+
 impl<T, E> IntoStdResult<T> for Result<T, E>
 where
     E: std::error::Error,
