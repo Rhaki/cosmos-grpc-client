@@ -58,6 +58,7 @@ pub struct StandardClients {
 }
 
 #[non_exhaustive]
+#[derive(Clone)]
 pub struct GrpcClient {
     inner: tonic::client::Grpc<Channel>,
     pub chain_id: String,
