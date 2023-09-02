@@ -10,6 +10,7 @@ pub use crate::definitions::{BroadcastMode, CoinType};
 pub use cosmwasm_std::{Decimal, StdError, StdResult, Uint128};
 pub use traits::IntoSerdeSerialize;
 pub use wallet::Wallet;
+pub use wallet::Msg;
 
 #[cfg(feature = "osmosis")]
 pub use osmosis_std;
