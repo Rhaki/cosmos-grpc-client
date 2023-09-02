@@ -17,7 +17,14 @@ use cosmos_sdk_proto::{
         MsgInstantiateContract2, 
         MsgMigrateContract, 
         MsgUpdateAdmin, 
-        MsgClearAdmin
+        MsgClearAdmin,
+
+        MsgExecuteContractResponse,
+        MsgInstantiateContractResponse,
+        MsgInstantiateContract2Response,
+        MsgMigrateContractResponse,
+        MsgUpdateAdminResponse,
+        MsgClearAdminResponse
     },
     traits::MessageExt,
     Any,
@@ -58,6 +65,15 @@ pub enum Msg {
     Migrate(MsgMigrateContract),
     uAdmin(MsgUpdateAdmin),
     cAdmin(MsgClearAdmin)
+}
+
+pub enum Rsp {
+    Init(MsgInstantiateContractResponse),
+    Exec(MsgExecuteContractResponse),
+    Init2(MsgInstantiateContract2Response),
+    Migrate(MsgMigrateContractResponse),
+    uAdmin(MsgUpdateAdminResponse),
+    cAdmin(MsgClearAdminResponse)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -184,7 +200,7 @@ impl Wallet {
         &self,
         client: &mut GrpcClient,
         msg: Vec<Msg>,
-    ) -> StdResult<BroadcastTxResponse> {
+    ) -> StdResult<Rsp> {
         match msg {
             Msg::Init(i) => return Ok(client.clients.msg.instantiate_contract(i.into()).await.into_std_result()?.into_inner()),
             Msg::Exec(e) => return Ok(client.clients.msg.execute_contract(e.into()).await.into_std_result()?.into_inner()),
