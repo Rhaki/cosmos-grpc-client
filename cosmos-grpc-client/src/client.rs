@@ -38,6 +38,7 @@ use crate::errors::IntoStdResult;
 
 use cosmwasm_std::to_vec;
 
+#[non_exhaustive]
 #[derive(Clone)]
 pub struct StandardClients {
     pub auth: AuthClient<Channel>,
