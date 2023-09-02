@@ -1,7 +1,16 @@
-[workspace]
-members            = ["cosmos-grpc-client", "mock_test"]
+[package]
+name               = "cosmos-grpc-client"
+version            = "0.23.1"
+edition            = "2021"
+authors            = ["Rhaki", "Morgan Metz"]
+description        = "Cosmos grpc client with wallet integration"
+license            = "Apache-2.0"
+repository         = "https://github.com/Rhaki/inter-chain-gate-core"
 
-[workspace.dependencies]
+[features]
+osmosis = []
+
+[dependencies]
 cosmrs             = {version = "0.14.0"}
 cosmos-sdk-proto   = {version = "0.19.0", features = ["cosmwasm"]}
 
@@ -23,6 +32,4 @@ osmosis-std        = "0.16.2"
 injective-protobuf = "0.2.0"
 
 protobuf           = "2.28.0"
-
-
 
