@@ -26,6 +26,7 @@ use cosmos_sdk_proto::{
     },
     cosmwasm::wasm::v1::{
         query_client::QueryClient as WasmClient, QueryContractsByCodeRequest,
+        msg_client::MsgClient as MsgClient,
         QuerySmartContractStateRequest,
     },
 };
@@ -56,6 +57,7 @@ pub struct StandardClients {
     pub upgrade: UpgradeClient<Channel>,
     pub wasm: WasmClient<Channel>,
     pub tx: TxClient<Channel>,
+    pub msg: MsgClient<Channel>,
 }
 
 #[non_exhaustive]
@@ -106,6 +108,7 @@ impl GrpcClient {
                 upgrade: UpgradeClient::new(channel.clone()),
                 wasm: WasmClient::new(channel.clone()),
                 tx: TxClient::new(channel),
+                msg: MsgClient::new(channel),
             },
         })
     }

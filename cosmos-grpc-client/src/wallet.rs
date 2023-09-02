@@ -11,6 +11,14 @@ use cosmos_sdk_proto::{
         tx::v1beta1::{BroadcastTxRequest, BroadcastTxResponse},
         tx::v1beta1::{SimulateRequest, SimulateResponse},
     },
+    cosmwasm::wasm::v1::{
+        MsgExecuteContract, 
+        MsgInstantiateContract, 
+        MsgInstantiateContract2, 
+        MsgMigrateContract, 
+        MsgUpdateAdmin, 
+        MsgClearAdmin
+    },
     traits::MessageExt,
     Any,
 };
@@ -41,6 +49,15 @@ pub struct Wallet {
     pub gas_adjustment: Decimal,
     pub gas_denom: String,
     pub derivation_path: String,
+}
+
+pub enum Msg {
+    Init(MsgInstantiateContract),
+    Exec(MsgExecuteContract),
+    Init2(MsgInstantiateContract2),
+    Migrate(MsgMigrateContract),
+    uAdmin(MsgUpdateAdmin),
+    cAdmin(MsgClearAdmin)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -161,6 +178,21 @@ impl Wallet {
             .await
             .into_std_result()?
             .into_inner())
+    }
+
+    pub async fn broadcast_msg(
+        &self,
+        client: &mut GrpcClient,
+        msg: Vec<Msg>,
+    ) -> StdResult<BroadcastTxResponse> {
+        match msg {
+            Msg::Init(i) => return Ok(client.clients.msg.instantiate_contract(i.into()).await.into_std_result()?.into_inner()),
+            Msg::Exec(e) => return Ok(client.clients.msg.execute_contract(e.into()).await.into_std_result()?.into_inner()),
+            Msg::Init2(i2) => return Ok(client.clients.msg.instantiate_contract2(i2.into()).await.into_std_result()?.into_inner()),
+            Msg::Migrate(m) => return Ok(client.clients.msg.migrate_contract(m.into()).await.into_std_result()?.into_inner()),
+            Msg::uAdmin(u) => return Ok(client.clients.msg.update_admin(u.into()).await.into_std_result()?.into_inner()),
+            Msg::cAdmin(c) => return Ok(client.clients.msg.clear_admin(c.into()).await.into_std_result()?.into_inner()),
+        }
     }
 
     #[allow(deprecated)]
