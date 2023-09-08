@@ -137,7 +137,7 @@ impl Wallet {
     }
 
     pub async fn broadcast_tx(
-        &self,
+        &mut self,
         client: &mut GrpcClient,
         msgs: Vec<Any>,
         fee: Option<Fee>,
@@ -174,13 +174,18 @@ impl Wallet {
             mode: broadacast_mode.repr(),
         };
 
-        Ok(client
+        let res = client
             .clients
             .tx
             .broadcast_tx(request)
             .await
             .into_std_result()?
-            .into_inner())
+            .into_inner();
+
+        
+        self.account_sequence += 1;
+        Ok(res)
+
     }
 
     #[allow(deprecated)]
