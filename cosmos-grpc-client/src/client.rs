@@ -66,12 +66,24 @@ pub struct GrpcClient {
 }
 
 impl GrpcClient {
-    pub async fn new(grpc_address: &'static str) -> StdResult<GrpcClient> {
-        let channel = tonic::transport::Channel::from_static(grpc_address)
+    pub async fn new(gprc_addres: impl Into<String>) -> StdResult<GrpcClient> {
+        let channel = Channel::builder(Into::<String>::into(gprc_addres).parse().unwrap())
             .connect()
             .await
             .into_std_result()?;
 
+        Self::build(channel).await
+    }
+    pub async fn new_from_static(grpc_address: &'static str) -> StdResult<GrpcClient> {
+        let channel = Channel::from_static(grpc_address)
+            .connect()
+            .await
+            .into_std_result()?;
+
+        Self::build(channel).await
+    }
+
+    async fn build(channel: Channel) -> StdResult<GrpcClient> {
         let mut tendermint_client = TendermintClient::new(channel.clone());
 
         let chain_id = tendermint_client
@@ -233,7 +245,7 @@ mod test {
 
     #[tokio::test]
     pub async fn test_contracts_by_code() {
-        let mut client = GrpcClient::new(TERRA_GRPC).await.unwrap();
+        let mut client = GrpcClient::new_from_static(TERRA_GRPC).await.unwrap();
 
         let _res = client.wasm_get_contracts_from_code_id(71).await.unwrap();
     }
@@ -254,7 +266,7 @@ mod test {
 
     #[tokio::test]
     pub async fn test_custom_query() {
-        let mut client = GrpcClient::new(OSMOSIS_GRPC).await.unwrap();
+        let mut client = GrpcClient::new_from_static(OSMOSIS_GRPC).await.unwrap();
 
         let request = PoolRequest { pool_id: 1 };
 

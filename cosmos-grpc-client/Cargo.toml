@@ -1,6 +1,6 @@
 [package]
 name               = "cosmos-grpc-client"
-version            = "0.2.4"
+version            = "0.3.0"
 edition            = "2021"
 authors            = ["Rhaki"]
 description        = "Cosmos grpc client with wallet integration"

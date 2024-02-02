@@ -322,7 +322,7 @@ mod test {
     async fn create_wallet() {
         let seed_phrase = "...";
 
-        let mut client = GrpcClient::new(TERRA_GRPC).await.unwrap();
+        let mut client = GrpcClient::new_from_static(TERRA_GRPC).await.unwrap();
 
         let wallet = Wallet::from_seed_phrase(
             &mut client,
@@ -354,7 +354,7 @@ mod test {
 
     #[tokio::test]
     async fn ranom_wallet() {
-        let mut client = GrpcClient::new(TERRA_GRPC).await.unwrap();
+        let mut client = GrpcClient::new_from_static(TERRA_GRPC).await.unwrap();
 
         let wallet = Wallet::random(
             &mut client,
