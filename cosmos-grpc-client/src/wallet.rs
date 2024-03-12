@@ -1,9 +1,10 @@
 use std::{fmt::Debug, str::FromStr};
 
+use anyhow::anyhow;
 use protobuf::Message;
 
 use bip39::Mnemonic;
-use cosmwasm_std::{Decimal, StdError, StdResult, Uint128};
+use cosmwasm_std::{Decimal, Uint128};
 
 use cosmos_sdk_proto::{
     cosmos::{
@@ -19,8 +20,8 @@ use injective_protobuf::proto::account::EthAccount;
 use crate::{
     client::GrpcClient,
     definitions::BroadcastMode,
-    errors::IntoStdResult,
     math::{IntoU64, IntoUint128},
+    traits::{IntoAnyhowResult, OkOrAny},
     CoinType,
 };
 
@@ -30,9 +31,12 @@ use cosmrs::{
     Coin, Denom,
 };
 
+use crate::AnyResult;
+
 #[non_exhaustive]
 pub struct Wallet {
     sign_key: SigningKey,
+    pub client: GrpcClient,
     pub chain_id: String,
     pub prefix: String,
     pub account_number: u64,
@@ -45,13 +49,13 @@ pub struct Wallet {
 #[allow(clippy::too_many_arguments)]
 impl Wallet {
     pub async fn random(
-        client: &mut GrpcClient,
+        client: GrpcClient,
         chain_prefix: impl Into<String> + Clone,
         coin_type: impl Into<u64> + Clone,
         gas_price: Decimal,
         gas_adjustment: Decimal,
         gas_denom: impl Into<String>,
-    ) -> StdResult<Wallet> {
+    ) -> AnyResult<Wallet> {
         let sign_key = SigningKey::random();
 
         Wallet::finalize_wallet_creation(
@@ -67,21 +71,22 @@ impl Wallet {
     }
 
     pub async fn from_private_key(
-        client: &mut GrpcClient,
+        client: GrpcClient,
         private_key: impl Into<String> + Clone,
         chain_prefix: impl Into<String> + Clone,
         coin_type: impl Into<u64> + Clone,
         gas_price: Decimal,
         gas_adjustment: Decimal,
         gas_denom: impl Into<String>,
-    ) -> StdResult<Wallet> {
+    ) -> AnyResult<Wallet> {
         let private_key: String = private_key.into();
 
-        let sign_key =
-            SigningKey::from_slice(&private_key.to_bytes().map_err(|err| {
-                StdError::generic_err(format!("Invalid private key, error: {err}"))
-            })?)
-            .map_err(|err| StdError::generic_err(err.to_string()))?;
+        let sign_key = SigningKey::from_slice(
+            &private_key
+                .to_bytes()
+                .map_err(|err| anyhow!("Invalid private key, error: {err}"))?,
+        )
+        .into_anyresult()?;
 
         Wallet::finalize_wallet_creation(
             client,
@@ -96,7 +101,7 @@ impl Wallet {
     }
 
     pub async fn from_seed_phrase(
-        client: &mut GrpcClient,
+        client: GrpcClient,
         seed_phrase: impl Into<String> + Clone,
         chain_prefix: impl Into<String> + Clone,
         coin_type: impl Into<u64> + Clone,
@@ -104,17 +109,14 @@ impl Wallet {
         gas_price: Decimal,
         gas_adjustment: Decimal,
         gas_denom: impl Into<String>,
-    ) -> StdResult<Wallet> {
-        let seed = Mnemonic::from_str(&seed_phrase.into())
-            .into_std_result()?
-            .to_seed("");
+    ) -> AnyResult<Wallet> {
+        let seed = Mnemonic::from_str(&seed_phrase.into())?.to_seed("");
 
         let derivation_path = bip32::DerivationPath::from_str(&format!(
             "m/44'/{}'/0'/0/{account_index}",
             coin_type.clone().into()
-        ))
-        .into_std_result()?;
-        let sign_key = SigningKey::derive_from_path(seed, &derivation_path).into_std_result()?;
+        ))?;
+        let sign_key = SigningKey::derive_from_path(seed, &derivation_path)?;
 
         Wallet::finalize_wallet_creation(
             client,
@@ -128,35 +130,33 @@ impl Wallet {
         .await
     }
 
-    pub fn account_address(&self) -> String {
-        self.sign_key
+    pub fn account_address(&self) -> AnyResult<String> {
+        Ok(self
+            .sign_key
             .public_key()
             .account_id(&self.prefix)
-            .unwrap()
-            .into()
+            .into_anyresult()?
+            .into())
     }
 
     pub async fn broadcast_tx(
         &mut self,
-        client: &mut GrpcClient,
         msgs: Vec<Any>,
         fee: Option<Fee>,
         memo: Option<String>,
         broadacast_mode: BroadcastMode,
-    ) -> StdResult<BroadcastTxResponse> {
+    ) -> AnyResult<BroadcastTxResponse> {
         let fee = if fee.is_none() {
             let gas_used = self
-                .simulate_tx(client, msgs.clone())
+                .simulate_tx(msgs.clone())
                 .await?
                 .gas_info
-                .unwrap()
+                .ok_or(anyhow!("No gas info in response"))?
                 .gas_used;
-
-            println!("{gas_used}");
 
             Fee {
                 amount: vec![Coin {
-                    denom: Denom::from_str(&self.gas_denom).unwrap(),
+                    denom: Denom::from_str(&self.gas_denom).into_anyresult()?,
                     amount: (self.gas_price * self.gas_adjustment * gas_used.as_uint128()
                         + Uint128::one())
                     .into(),
@@ -170,30 +170,28 @@ impl Wallet {
         };
 
         let request = BroadcastTxRequest {
-            tx_bytes: self.create_tx(msgs, fee, memo).to_bytes().unwrap(),
+            tx_bytes: self
+                .create_tx(msgs, fee, memo)?
+                .to_bytes()
+                .into_anyresult()?,
             mode: broadacast_mode.repr(),
         };
 
-        let res = client
+        let res = self
+            .client
             .clients
             .tx
+            .clone()
             .broadcast_tx(request)
-            .await
-            .into_std_result()?
+            .await?
             .into_inner();
 
-        
         self.account_sequence += 1;
         Ok(res)
-
     }
 
     #[allow(deprecated)]
-    pub async fn simulate_tx(
-        &self,
-        client: &mut GrpcClient,
-        msgs: Vec<Any>,
-    ) -> StdResult<SimulateResponse> {
+    pub async fn simulate_tx(&self, msgs: Vec<Any>) -> AnyResult<SimulateResponse> {
         let tx = self.create_tx(
             msgs,
             Fee {
@@ -203,62 +201,71 @@ impl Wallet {
                 payer: None,
             },
             Some("".to_string()),
-        );
+        )?;
 
         let request = SimulateRequest {
             tx: None,
-            tx_bytes: tx.to_bytes().unwrap(),
+            tx_bytes: tx.to_bytes().into_anyresult()?,
         };
 
-        Ok(client
+        Ok(self
+            .client
             .clients
             .tx
+            .clone()
             .simulate(request)
-            .await
-            .into_std_result()?
+            .await?
             .into_inner())
     }
 
     async fn finalize_wallet_creation(
-        client: &mut GrpcClient,
+        client: GrpcClient,
         sign_key: SigningKey,
         chain_prefix: impl Into<String> + Clone,
         coin_type: impl Into<u64> + Clone,
         gas_price: Decimal,
         gas_adjustment: Decimal,
         gas_denom: impl Into<String>,
-    ) -> StdResult<Wallet> {
+    ) -> AnyResult<Wallet> {
         let raw_res = client
             .clients
             .auth
+            .clone()
             .account(QueryAccountRequest {
                 address: sign_key
                     .public_key()
                     .account_id(&chain_prefix.clone().into())
-                    .unwrap()
+                    .into_anyresult()?
                     .to_string(),
             })
             .await
-            .map(|res| res.into_inner())
-            .into_std_result();
+            .map(|res| res.into_inner());
 
         let (number, sequence) = match raw_res {
             Ok(raw_res) => match CoinType::from_repr(coin_type.into()) {
-                Some(CoinType::Injective) => {
-                    EthAccount::parse_from_bytes(raw_res.account.unwrap().value.as_slice())
-                        .into_std_result()?
-                        .base_account
-                        .map(|res| (res.account_number, res.sequence))
-                        .unwrap_or((0, 0))
-                }
-                _ => BaseAccount::from_any(&raw_res.account.unwrap())
-                    .map(|res| (res.account_number, res.sequence))
-                    .unwrap_or((0, 0)),
+                Some(CoinType::Injective) => EthAccount::parse_from_bytes(
+                    raw_res
+                        .account
+                        .ok_or_any("Error unwrapping None in raw_res.account")?
+                        .value
+                        .as_slice(),
+                )?
+                .base_account
+                .map(|res| (res.account_number, res.sequence))
+                .unwrap_or((0, 0)),
+                _ => BaseAccount::from_any(
+                    &raw_res
+                        .account
+                        .ok_or_any("Error unwrapping None in raw_res.account")?,
+                )
+                .map(|res| (res.account_number, res.sequence))
+                .unwrap_or((0, 0)),
             },
             Err(_) => (0, 0),
         };
 
         Ok(Wallet {
+            client: client.clone(),
             chain_id: client.chain_id.clone(),
             prefix: chain_prefix.into(),
             sign_key,
@@ -270,7 +277,7 @@ impl Wallet {
         })
     }
 
-    fn create_tx(&self, msgs: Vec<Any>, fee: Fee, memo: Option<String>) -> Raw {
+    fn create_tx(&self, msgs: Vec<Any>, fee: Fee, memo: Option<String>) -> AnyResult<Raw> {
         let tx_body = cosmrs::tx::BodyBuilder::new()
             .msgs(msgs)
             .memo(memo.unwrap_or("".to_string()))
@@ -283,11 +290,11 @@ impl Wallet {
         let sign_doc = SignDoc::new(
             &tx_body,
             &auth_info,
-            &self.chain_id.parse().unwrap(),
+            &self.chain_id.parse()?,
             self.account_number,
         )
-        .unwrap();
-        sign_doc.sign(&self.sign_key).unwrap()
+        .into_anyresult()?;
+        sign_doc.sign(&self.sign_key).into_anyresult()
     }
 }
 
@@ -322,10 +329,10 @@ mod test {
     async fn create_wallet() {
         let seed_phrase = "...";
 
-        let mut client = GrpcClient::new_from_static(TERRA_GRPC).await.unwrap();
+        let client = GrpcClient::new_from_static(TERRA_GRPC).await.unwrap();
 
         let wallet = Wallet::from_seed_phrase(
-            &mut client,
+            client.clone(),
             seed_phrase,
             "terra",
             CoinType::Terra,
@@ -338,7 +345,7 @@ mod test {
         .unwrap();
 
         let msg = MsgSend {
-            from_address: wallet.account_address(),
+            from_address: wallet.account_address().unwrap(),
             to_address: "...".to_string(),
             amount: vec![Coin {
                 denom: "uluna".to_string(),
@@ -347,17 +354,17 @@ mod test {
         };
 
         wallet
-            .simulate_tx(&mut client, vec![msg.to_any().unwrap()])
+            .simulate_tx(vec![msg.to_any().unwrap()])
             .await
             .unwrap();
     }
 
     #[tokio::test]
     async fn ranom_wallet() {
-        let mut client = GrpcClient::new_from_static(TERRA_GRPC).await.unwrap();
+        let client = GrpcClient::new_from_static(TERRA_GRPC).await.unwrap();
 
         let wallet = Wallet::random(
-            &mut client,
+            client,
             "terra",
             CoinType::Terra,
             Decimal::from_str("0.015").unwrap(),

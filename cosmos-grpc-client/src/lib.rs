@@ -11,6 +11,8 @@ pub use cosmwasm_std::{Decimal, StdError, StdResult, Uint128};
 pub use traits::IntoSerdeSerialize;
 pub use wallet::Wallet;
 
+use anyhow::Result as AnyResult;
+
 #[cfg(feature = "osmosis")]
 pub use osmosis_std;
 

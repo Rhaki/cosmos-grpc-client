@@ -1,5 +1,3 @@
-use cosmwasm_std::{from_slice, StdResult};
-
 use cosmos_sdk_proto::{
     cosmos::bank::v1beta1::query_client::QueryClient as BankClient,
     cosmos::{
@@ -33,10 +31,13 @@ use cosmos_sdk_proto::{
 use serde::{de::DeserializeOwned, Serialize};
 use tonic::transport::Channel;
 
-use crate::errors::IntoStdResult;
-
 use cosmwasm_std::to_vec;
 
+use anyhow::anyhow;
+
+use crate::AnyResult;
+
+#[derive(Clone)]
 pub struct StandardClients {
     pub auth: AuthClient<Channel>,
     pub authz: AuthzClient<Channel>,
@@ -58,6 +59,7 @@ pub struct StandardClients {
 }
 
 #[non_exhaustive]
+#[derive(Clone)]
 pub struct GrpcClient {
     inner: tonic::client::Grpc<Channel>,
     pub chain_id: String,
@@ -66,33 +68,29 @@ pub struct GrpcClient {
 }
 
 impl GrpcClient {
-    pub async fn new(gprc_addres: impl Into<String>) -> StdResult<GrpcClient> {
-        let channel = Channel::builder(Into::<String>::into(gprc_addres).parse().unwrap())
+    pub async fn new(gprc_addres: impl Into<String>) -> AnyResult<GrpcClient> {
+        let channel = Channel::builder(Into::<String>::into(gprc_addres).parse()?)
             .connect()
-            .await
-            .into_std_result()?;
-
-        Self::build(channel).await
-    }
-    pub async fn new_from_static(grpc_address: &'static str) -> StdResult<GrpcClient> {
-        let channel = Channel::from_static(grpc_address)
-            .connect()
-            .await
-            .into_std_result()?;
+            .await?;
 
         Self::build(channel).await
     }
 
-    async fn build(channel: Channel) -> StdResult<GrpcClient> {
+    pub async fn new_from_static(grpc_address: &'static str) -> AnyResult<GrpcClient> {
+        let channel = Channel::from_static(grpc_address).connect().await?;
+
+        Self::build(channel).await
+    }
+
+    async fn build(channel: Channel) -> AnyResult<GrpcClient> {
         let mut tendermint_client = TendermintClient::new(channel.clone());
 
         let chain_id = tendermint_client
             .get_node_info(GetNodeInfoRequest {})
-            .await
-            .into_std_result()?
+            .await?
             .into_inner()
             .default_node_info
-            .unwrap()
+            .ok_or(anyhow!("No node info"))?
             .network;
 
         Ok(GrpcClient {
@@ -132,78 +130,68 @@ impl GrpcClient {
     /// #[tokio::test]
     /// fn async custom_query_example() {
     ///
-    ///     let mut client = GrpcClient::new("http://grpc.osmosis.zone:9090").await.unwrap();
+    ///     let client = GrpcClient::new("http://grpc.osmosis.zone:9090").await.unwrap();
     ///
     ///     let request = PoolRequest{ pool_id: 1 };
-    ///     let type_url: &str = "/osmosis.poolmanager.v1beta1.Query/Pool";
     ///
     ///     // Since osmosis has different type of pool, this response still in protobuff
     ///     // and has to be deocded in the  correct pool model. in this case Balancer pool type
-    ///     let response: PoolResponse = client.general_query(request, type_url).await.unwrap();
+    ///     let response: PoolResponse = client.proto_query(request, PoolRequest::TYPE_URL).await.unwrap();
     ///
     ///     let pool = Pool::decode(response.pool.unwrap().value.as_slice()).unwrap();
     /// }
     /// ```
-    pub async fn general_query<Q, R>(
-        &mut self,
-        request: Q,
-        type_url: impl Into<String>,
-    ) -> StdResult<R>
+
+    pub async fn proto_query<Q, R>(&self, request: Q, type_url: impl Into<String>) -> AnyResult<R>
     where
         Q: Send + Sync + cosmos_sdk_proto::prost::Message + tonic::IntoRequest<Q> + 'static,
         R: Send + Sync + cosmos_sdk_proto::prost::Message + Default + 'static,
     {
-        self.inner.ready().await.into_std_result()?;
+        let mut client = self.inner.clone();
 
         let codec: tonic::codec::ProstCodec<Q, R> = tonic::codec::ProstCodec::default();
         let path = tonic::codegen::http::uri::PathAndQuery::from_static(Box::leak(
             type_url.into().into_boxed_str(),
         ));
 
-        Ok(self
-            .inner
+        Ok(client
             .unary(request.into_request(), path, codec)
-            .await
-            .into_std_result()?
+            .await?
             .into_inner())
     }
 
     pub async fn wasm_query_contract<Request: Serialize, Response: DeserializeOwned>(
-        &mut self,
+        &self,
         contract_address: impl Into<String>,
         msg: Request,
-    ) -> StdResult<Response> {
+    ) -> AnyResult<Response> {
         let res = self
             .clients
             .wasm
+            .clone()
             .smart_contract_state(QuerySmartContractStateRequest {
                 address: contract_address.into(),
                 query_data: to_vec(&msg)?,
             })
-            .await
-            .into_std_result()?
+            .await?
             .into_inner();
 
-        from_slice(res.data.as_slice())
+        Ok(serde_json::from_slice(res.data.as_slice())?)
     }
 
-    pub async fn wasm_get_contracts_from_code_id(
-        &mut self,
-        code_id: u64,
-    ) -> StdResult<Vec<String>> {
+    pub async fn wasm_get_contracts_from_code_id(&self, code_id: u64) -> AnyResult<Vec<String>> {
         let mut pagination = None;
         let mut contracts: Vec<String> = vec![];
         let mut finish = false;
+
+        let mut wasm = self.clients.wasm.clone();
         while !finish {
-            let mut res = self
-                .clients
-                .wasm
+            let mut res = wasm
                 .contracts_by_code(QueryContractsByCodeRequest {
                     code_id,
                     pagination: pagination.clone(),
                 })
-                .await
-                .into_std_result()?
+                .await?
                 .into_inner();
 
             contracts.append(&mut res.contracts);
@@ -245,7 +233,7 @@ mod test {
 
     #[tokio::test]
     pub async fn test_contracts_by_code() {
-        let mut client = GrpcClient::new_from_static(TERRA_GRPC).await.unwrap();
+        let client = GrpcClient::new_from_static(TERRA_GRPC).await.unwrap();
 
         let _res = client.wasm_get_contracts_from_code_id(71).await.unwrap();
     }
@@ -266,13 +254,14 @@ mod test {
 
     #[tokio::test]
     pub async fn test_custom_query() {
-        let mut client = GrpcClient::new_from_static(OSMOSIS_GRPC).await.unwrap();
+        let client = GrpcClient::new_from_static(OSMOSIS_GRPC).await.unwrap();
 
         let request = PoolRequest { pool_id: 1 };
 
-        let type_url: &str = "/osmosis.poolmanager.v1beta1.Query/Pool";
-
-        let response: PoolResponse = client.general_query(request, type_url).await.unwrap();
+        let response: PoolResponse = client
+            .proto_query(request, PoolRequest::TYPE_URL)
+            .await
+            .unwrap();
 
         let _pool = Pool::decode(response.pool.unwrap().value.as_slice()).unwrap();
     }
