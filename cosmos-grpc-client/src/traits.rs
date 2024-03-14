@@ -6,7 +6,7 @@ use crate::AnyResult;
 
 pub trait IntoSerdeSerialize: serde::Serialize {
     fn json_serialize(&self) -> AnyResult<Vec<u8>> {
-        Ok(serde_json::to_vec(self)?)
+        Ok(serde_json_wasm::to_vec(self)?)
     }
 }
 

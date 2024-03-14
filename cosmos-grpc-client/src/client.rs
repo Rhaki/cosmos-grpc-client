@@ -176,7 +176,7 @@ impl GrpcClient {
             .await?
             .into_inner();
 
-        Ok(serde_json::from_slice(res.data.as_slice())?)
+        Ok(serde_json_wasm::from_slice(res.data.as_slice())?)
     }
 
     pub async fn wasm_get_contracts_from_code_id(&self, code_id: u64) -> AnyResult<Vec<String>> {

@@ -18,7 +18,8 @@ tonic              = "0.9.2"
 anyhow             = "1.0.81"
 
 serde              = "1.0.185"
-serde_json         = "1.0.105"
+serde-json-wasm    = "1.0.1"
+
 enum-repr          = "0.2.6"
 
 osmosis-std        = "0.16.2"

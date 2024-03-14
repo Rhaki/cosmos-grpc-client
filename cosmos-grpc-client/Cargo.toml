@@ -1,6 +1,6 @@
 [package]
 name               = "cosmos-grpc-client"
-version            = "1.0.0"
+version            = "1.0.1"
 edition            = "2021"
 authors            = ["Rhaki"]
 description        = "Cosmos grpc client with wallet integration"
@@ -27,7 +27,8 @@ tokio              = {workspace=true}
 tonic              = {workspace=true}
 
 serde              = {workspace=true}
-serde_json         = {workspace=true}
+serde-json-wasm    = {workspace=true}
+
 enum-repr          = {workspace=true}
 
 osmosis-std        = {workspace=true}
