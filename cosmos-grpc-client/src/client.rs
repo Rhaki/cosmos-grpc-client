@@ -31,8 +31,6 @@ use cosmos_sdk_proto::{
 use serde::{de::DeserializeOwned, Serialize};
 use tonic::transport::Channel;
 
-use cosmwasm_std::to_vec;
-
 use anyhow::anyhow;
 
 use crate::AnyResult;
@@ -160,23 +158,33 @@ impl GrpcClient {
             .into_inner())
     }
 
-    pub async fn wasm_query_contract<Request: Serialize, Response: DeserializeOwned>(
+    pub async fn query_smart_contract<Request: Serialize, Response: DeserializeOwned>(
         &self,
         contract_address: impl Into<String>,
         msg: Request,
     ) -> AnyResult<Response> {
+        let res = self.query_smart_contract_raw(contract_address, msg).await?;
+
+        Ok(serde_json_wasm::from_slice(res.as_slice())?)
+    }
+
+    pub async fn query_smart_contract_raw<Request: Serialize>(
+        &self,
+        contract_address: impl Into<String>,
+        msg: Request,
+    ) -> AnyResult<Vec<u8>> {
         let res = self
             .clients
             .wasm
             .clone()
             .smart_contract_state(QuerySmartContractStateRequest {
                 address: contract_address.into(),
-                query_data: to_vec(&msg)?,
+                query_data: serde_json_wasm::to_vec(&msg)?,
             })
             .await?
             .into_inner();
 
-        Ok(serde_json_wasm::from_slice(res.data.as_slice())?)
+        Ok(res.data)
     }
 
     pub async fn wasm_get_contracts_from_code_id(&self, code_id: u64) -> AnyResult<Vec<String>> {
