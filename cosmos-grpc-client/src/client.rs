@@ -1,12 +1,14 @@
 use cosmos_sdk_proto::{
-    cosmos::bank::v1beta1::query_client::QueryClient as BankClient,
     cosmos::{
         auth::v1beta1::query_client::QueryClient as AuthClient,
         authz::v1beta1::query_client::QueryClient as AuthzClient,
+        bank::v1beta1::query_client::QueryClient as BankClient,
         base::{
             query::v1beta1::PageRequest,
-            reflection::v1beta1::reflection_service_client::ReflectionServiceClient as ReflectionClientV1,
-            reflection::v2alpha1::reflection_service_client::ReflectionServiceClient as ReflectionClientV2,
+            reflection::{
+                v1beta1::reflection_service_client::ReflectionServiceClient as ReflectionClientV1,
+                v2alpha1::reflection_service_client::ReflectionServiceClient as ReflectionClientV2,
+            },
             tendermint::v1beta1::{
                 service_client::ServiceClient as TendermintClient, GetNodeInfoRequest,
             },
@@ -24,7 +26,7 @@ use cosmos_sdk_proto::{
     },
     cosmwasm::wasm::v1::{
         query_client::QueryClient as WasmClient, QueryContractsByCodeRequest,
-        QuerySmartContractStateRequest,
+        QueryRawContractStateRequest, QuerySmartContractStateRequest,
     },
 };
 
@@ -185,6 +187,36 @@ impl GrpcClient {
             .into_inner();
 
         Ok(res.data)
+    }
+
+    pub async fn query_raw_contract_raw(
+        &self,
+        contract_address: impl Into<String>,
+        query_data: Vec<u8>,
+    ) -> AnyResult<Vec<u8>> {
+        Ok(self
+            .clients
+            .wasm
+            .clone()
+            .raw_contract_state(QueryRawContractStateRequest {
+                address: contract_address.into(),
+                query_data,
+            })
+            .await?
+            .into_inner()
+            .data)
+    }
+
+    pub async fn query_raw_contract<Response: DeserializeOwned>(
+        &self,
+        contract_address: impl Into<String>,
+        query_data: Vec<u8>,
+    ) -> AnyResult<Response> {
+        Ok(serde_json_wasm::from_slice(
+            &self
+                .query_raw_contract_raw(contract_address, query_data)
+                .await?,
+        )?)
     }
 
     pub async fn wasm_get_contracts_from_code_id(&self, code_id: u64) -> AnyResult<Vec<String>> {
