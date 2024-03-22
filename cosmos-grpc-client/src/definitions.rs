@@ -3,7 +3,7 @@ use enum_repr::EnumRepr;
 #[allow(dead_code)]
 pub const TERRA_GRPC: &str = "http://terra-grpc.polkachu.com:11790";
 #[allow(dead_code)]
-pub const OSMOSIS_GRPC: &str = "http://grpc.osmosis.zone:9090";
+pub const OSMOSIS_GRPC: &str = "https://osmosis-grpc.polkachu.com:12590";
 #[allow(dead_code)]
 pub const LOCAL_GPRC: &str = "http://localhost:9090";
 

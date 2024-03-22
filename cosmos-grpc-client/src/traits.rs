@@ -50,3 +50,36 @@ impl<T> OkOrAny for Option<T> {
         self.ok_or(anyhow!("{}", error))
     }
 }
+
+/// A trait for converting different `Any` types into a [`prost_types::Any`].
+pub trait SharedAny: Clone {
+    fn into_any(self) -> prost_types::Any;
+}
+
+impl SharedAny for osmosis_std::shim::Any {
+    fn into_any(self) -> prost_types::Any {
+        prost_types::Any {
+            type_url: self.type_url,
+            value: self.value,
+        }
+    }
+}
+
+impl SharedAny for prost_types::Any {
+    fn into_any(self) -> prost_types::Any {
+        self
+    }
+}
+
+/// Enable conversation of [`prost::Message`] type into [`prost_types::Any`].
+pub trait AnyBuilder {
+    fn build_any(self, type_url: impl Into<String>) -> prost_types::Any;
+}
+
+impl<T: prost::Message> AnyBuilder for T {
+    fn build_any(self, type_url: impl Into<String>) -> prost_types::Any {
+        let type_url = type_url.into();
+        let value = self.encode_to_vec();
+        prost_types::Any { type_url, value }
+    }
+}

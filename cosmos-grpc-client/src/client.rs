@@ -30,6 +30,7 @@ use cosmos_sdk_proto::{
     },
 };
 
+use prost::Message;
 use serde::{de::DeserializeOwned, Serialize};
 use tonic::transport::Channel;
 
@@ -144,10 +145,12 @@ impl GrpcClient {
 
     pub async fn proto_query<Q, R>(&self, request: Q, type_url: impl Into<String>) -> AnyResult<R>
     where
-        Q: Send + Sync + cosmos_sdk_proto::prost::Message + tonic::IntoRequest<Q> + 'static,
-        R: Send + Sync + cosmos_sdk_proto::prost::Message + Default + 'static,
+        Q: Send + Sync + Message + tonic::IntoRequest<Q> + 'static,
+        R: Send + Sync + Message + Default + 'static,
     {
         let mut client = self.inner.clone();
+
+        client.ready().await?;
 
         let codec: tonic::codec::ProstCodec<Q, R> = tonic::codec::ProstCodec::default();
         let path = tonic::codegen::http::uri::PathAndQuery::from_static(Box::leak(
@@ -155,7 +158,7 @@ impl GrpcClient {
         ));
 
         Ok(client
-            .unary(request.into_request(), path, codec)
+            .unary::<Q, R, tonic::codec::ProstCodec<Q, R>>(request.into_request(), path, codec)
             .await?
             .into_inner())
     }
@@ -259,12 +262,9 @@ impl GrpcClient {
 #[allow(dead_code)]
 mod test {
 
-    use cosmos_sdk_proto::{
-        cosmos::base::v1beta1::Coin,
-        traits::{Message, MessageExt},
-    };
+    use cosmos_sdk_proto::{cosmos::base::v1beta1::Coin, traits::Message};
 
-    use osmosis_std::types::osmosis::gamm::v1beta1::Pool;
+    use osmosis_std::types::osmosis::poolmanager::v1beta1::{AllPoolsRequest, AllPoolsResponse};
     use osmosis_std::types::osmosis::poolmanager::v1beta1::{PoolRequest, PoolResponse};
 
     use crate::definitions::{OSMOSIS_GRPC, TERRA_GRPC};
@@ -289,7 +289,7 @@ mod test {
             }],
         };
 
-        msg.to_any().unwrap();
+        let _a = msg.encode_to_vec();
     }
 
     #[tokio::test]
@@ -298,11 +298,16 @@ mod test {
 
         let request = PoolRequest { pool_id: 1 };
 
-        let response: PoolResponse = client
-            .proto_query(request, PoolRequest::TYPE_URL)
+        let _response: PoolResponse = client
+            .proto_query(request, "/osmosis.poolmanager.v1beta1.Query/Pool")
             .await
             .unwrap();
 
-        let _pool = Pool::decode(response.pool.unwrap().value.as_slice()).unwrap();
+        let request = AllPoolsRequest {};
+
+        let _response: AllPoolsResponse = client
+            .proto_query(request, "/osmosis.poolmanager.v1beta1.Query/AllPools")
+            .await
+            .unwrap();
     }
 }

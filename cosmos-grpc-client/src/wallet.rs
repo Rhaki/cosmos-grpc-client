@@ -1,7 +1,6 @@
 use std::{fmt::Debug, str::FromStr};
 
 use anyhow::anyhow;
-use protobuf::Message;
 
 use bip39::Mnemonic;
 use cosmwasm_std::{Decimal, Uint128};
@@ -13,25 +12,24 @@ use cosmos_sdk_proto::{
         tx::v1beta1::{SimulateRequest, SimulateResponse},
     },
     traits::MessageExt,
-    Any,
 };
-use injective_protobuf::proto::account::EthAccount;
+use prost::Message;
 
 use crate::{
     client::GrpcClient,
     definitions::BroadcastMode,
     math::{IntoU64, IntoUint128},
-    traits::{IntoAnyhowResult, OkOrAny},
+    traits::{IntoAnyhowResult, OkOrAny, SharedAny},
     CoinType,
 };
 
+use crate::AnyResult;
 use cosmrs::{
     crypto::secp256k1::SigningKey,
     tx::{Fee, Raw, SignDoc, SignerInfo},
     Coin, Denom,
 };
-
-use crate::AnyResult;
+use prost_types::Any;
 
 #[non_exhaustive]
 pub struct Wallet {
@@ -141,12 +139,14 @@ impl Wallet {
 
     pub async fn broadcast_tx(
         &mut self,
-        msgs: Vec<Any>,
+        msgs: Vec<impl SharedAny>,
         fee: Option<Fee>,
         memo: Option<String>,
         broadacast_mode: BroadcastMode,
     ) -> AnyResult<BroadcastTxResponse> {
-        let fee = if fee.is_none() {
+        let fee = if let Some(fee) = fee {
+            fee
+        } else {
             let gas_used = self
                 .simulate_tx(msgs.clone())
                 .await?
@@ -165,8 +165,6 @@ impl Wallet {
                 payer: None,
                 granter: None,
             }
-        } else {
-            fee.unwrap()
         };
 
         let request = BroadcastTxRequest {
@@ -191,7 +189,7 @@ impl Wallet {
     }
 
     #[allow(deprecated)]
-    pub async fn simulate_tx(&self, msgs: Vec<Any>) -> AnyResult<SimulateResponse> {
+    pub async fn simulate_tx(&self, msgs: Vec<impl SharedAny>) -> AnyResult<SimulateResponse> {
         let tx = self.create_tx(
             msgs,
             Fee {
@@ -242,21 +240,23 @@ impl Wallet {
             .map(|res| res.into_inner());
 
         let (number, sequence) = match raw_res {
+            #[allow(clippy::match_single_binding)]
             Ok(raw_res) => match CoinType::from_repr(coin_type.into()) {
-                Some(CoinType::Injective) => EthAccount::parse_from_bytes(
-                    raw_res
-                        .account
-                        .ok_or_any("Error unwrapping None in raw_res.account")?
-                        .value
-                        .as_slice(),
-                )?
-                .base_account
-                .map(|res| (res.account_number, res.sequence))
-                .unwrap_or((0, 0)),
-                _ => BaseAccount::from_any(
+                // Some(CoinType::Injective) => EthAccount::parse_from_bytes(
+                //     raw_res
+                //         .account
+                //         .ok_or_any("Error unwrapping None in raw_res.account")?
+                //         .value
+                //         .as_slice(),
+                // )?
+                // .base_account
+                // .map(|res| (res.account_number, res.sequence))
+                // .unwrap_or((0, 0)),
+                _ => BaseAccount::decode(
                     &raw_res
                         .account
-                        .ok_or_any("Error unwrapping None in raw_res.account")?,
+                        .ok_or_any("Error unwrapping None in raw_res.account")?
+                        .value[..],
                 )
                 .map(|res| (res.account_number, res.sequence))
                 .unwrap_or((0, 0)),
@@ -277,9 +277,18 @@ impl Wallet {
         })
     }
 
-    fn create_tx(&self, msgs: Vec<Any>, fee: Fee, memo: Option<String>) -> AnyResult<Raw> {
+    fn create_tx(
+        &self,
+        msgs: Vec<impl SharedAny>,
+        fee: Fee,
+        memo: Option<String>,
+    ) -> AnyResult<Raw> {
         let tx_body = cosmrs::tx::BodyBuilder::new()
-            .msgs(msgs)
+            .msgs(
+                msgs.into_iter()
+                    .map(|val| val.into_any())
+                    .collect::<Vec<Any>>(),
+            )
             .memo(memo.unwrap_or("".to_string()))
             .finish();
 
@@ -317,13 +326,10 @@ impl Debug for Wallet {
 mod test {
     use std::str::FromStr;
 
-    use cosmos_sdk_proto::{
-        cosmos::{bank::v1beta1::MsgSend, base::v1beta1::Coin},
-        traits::MessageExt,
-    };
     use cosmwasm_std::Decimal;
+    use osmosis_std::types::cosmos::{bank::v1beta1::MsgSend, base::v1beta1::Coin};
 
-    use crate::{definitions::TERRA_GRPC, CoinType, GrpcClient, Wallet};
+    use crate::{definitions::TERRA_GRPC, traits::AnyBuilder, CoinType, GrpcClient, Wallet};
 
     #[tokio::test]
     async fn create_wallet() {
@@ -353,8 +359,19 @@ mod test {
             }],
         };
 
+        wallet.simulate_tx(vec![msg.to_any()]).await.unwrap();
+
+        let msg = cosmos_sdk_proto::cosmos::bank::v1beta1::MsgSend {
+            from_address: wallet.account_address().unwrap(),
+            to_address: "...".to_string(),
+            amount: vec![cosmos_sdk_proto::cosmos::base::v1beta1::Coin {
+                denom: "uluna".to_string(),
+                amount: "100".to_string(),
+            }],
+        };
+
         wallet
-            .simulate_tx(vec![msg.to_any().unwrap()])
+            .simulate_tx(vec![msg.build_any("type_url")])
             .await
             .unwrap();
     }
