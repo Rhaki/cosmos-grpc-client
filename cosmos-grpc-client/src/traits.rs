@@ -1,6 +1,8 @@
 use std::fmt::Display;
 
 use anyhow::anyhow;
+use cosmrs::Any;
+use prost::{Message, Name};
 
 use crate::AnyResult;
 
@@ -81,5 +83,18 @@ impl<T: prost::Message> AnyBuilder for T {
         let type_url = type_url.into();
         let value = self.encode_to_vec();
         prost_types::Any { type_url, value }
+    }
+}
+
+pub trait IntoAny {
+    fn into_any(self) -> prost_types::Any;
+}
+
+impl<T: Message + Name> IntoAny for T {
+    fn into_any(self) -> prost_types::Any {
+        Any {
+            type_url: Self::type_url(),
+            value: self.encode_to_vec(),
+        }
     }
 }
