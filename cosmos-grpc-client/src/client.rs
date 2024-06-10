@@ -1,42 +1,41 @@
-use cosmos_sdk_proto::{
-    cosmos::{
-        auth::v1beta1::query_client::QueryClient as AuthClient,
-        authz::v1beta1::query_client::QueryClient as AuthzClient,
-        bank::v1beta1::query_client::QueryClient as BankClient,
-        base::{
-            query::v1beta1::PageRequest,
-            reflection::{
-                v1beta1::reflection_service_client::ReflectionServiceClient as ReflectionClientV1,
-                v2alpha1::reflection_service_client::ReflectionServiceClient as ReflectionClientV2,
+use {
+    crate::AnyResult,
+    anyhow::anyhow,
+    cosmos_sdk_proto::{
+        cosmos::{
+            auth::v1beta1::query_client::QueryClient as AuthClient,
+            authz::v1beta1::query_client::QueryClient as AuthzClient,
+            bank::v1beta1::query_client::QueryClient as BankClient,
+            base::{
+                query::v1beta1::PageRequest,
+                reflection::{
+                    v1beta1::reflection_service_client::ReflectionServiceClient as ReflectionClientV1,
+                    v2alpha1::reflection_service_client::ReflectionServiceClient as ReflectionClientV2,
+                },
+                tendermint::v1beta1::{
+                    service_client::ServiceClient as TendermintClient, GetNodeInfoRequest,
+                },
             },
-            tendermint::v1beta1::{
-                service_client::ServiceClient as TendermintClient, GetNodeInfoRequest,
-            },
+            distribution::v1beta1::query_client::QueryClient as DistributionClient,
+            evidence::v1beta1::query_client::QueryClient as EvidenceClient,
+            feegrant::v1beta1::query_client::QueryClient as FeeGrantClient,
+            gov::v1beta1::query_client::QueryClient as GovClient,
+            mint::v1beta1::query_client::QueryClient as MintClient,
+            params::v1beta1::query_client::QueryClient as ParamsClient,
+            slashing::v1beta1::query_client::QueryClient as SlashingClient,
+            staking::v1beta1::query_client::QueryClient as StakingClient,
+            tx::v1beta1::service_client::ServiceClient as TxClient,
+            upgrade::v1beta1::query_client::QueryClient as UpgradeClient,
         },
-        distribution::v1beta1::query_client::QueryClient as DistributionClient,
-        evidence::v1beta1::query_client::QueryClient as EvidenceClient,
-        feegrant::v1beta1::query_client::QueryClient as FeeGrantClient,
-        gov::v1beta1::query_client::QueryClient as GovClient,
-        mint::v1beta1::query_client::QueryClient as MintClient,
-        params::v1beta1::query_client::QueryClient as ParamsClient,
-        slashing::v1beta1::query_client::QueryClient as SlashingClient,
-        staking::v1beta1::query_client::QueryClient as StakingClient,
-        tx::v1beta1::service_client::ServiceClient as TxClient,
-        upgrade::v1beta1::query_client::QueryClient as UpgradeClient,
+        cosmwasm::wasm::v1::{
+            query_client::QueryClient as WasmClient, QueryContractsByCodeRequest,
+            QueryRawContractStateRequest, QuerySmartContractStateRequest,
+        },
     },
-    cosmwasm::wasm::v1::{
-        query_client::QueryClient as WasmClient, QueryContractsByCodeRequest,
-        QueryRawContractStateRequest, QuerySmartContractStateRequest,
-    },
+    prost::Message,
+    serde::{de::DeserializeOwned, Serialize},
+    tonic::transport::Channel,
 };
-
-use prost::Message;
-use serde::{de::DeserializeOwned, Serialize};
-use tonic::transport::Channel;
-
-use anyhow::anyhow;
-
-use crate::AnyResult;
 
 #[derive(Clone)]
 pub struct StandardClients {
@@ -259,6 +258,7 @@ impl GrpcClient {
 }
 
 #[cfg(test)]
+#[cfg(feature = "osmosis")]
 #[allow(dead_code)]
 mod test {
 
@@ -267,13 +267,15 @@ mod test {
     use osmosis_std::types::osmosis::poolmanager::v1beta1::{AllPoolsRequest, AllPoolsResponse};
     use osmosis_std::types::osmosis::poolmanager::v1beta1::{PoolRequest, PoolResponse};
 
-    use crate::definitions::{OSMOSIS_GRPC, TERRA_GRPC};
+    use crate::definitions::OSMOSIS_GRPC_TESTNET;
 
     use super::*;
 
     #[tokio::test]
     pub async fn test_contracts_by_code() {
-        let client = GrpcClient::new_from_static(TERRA_GRPC).await.unwrap();
+        let client = GrpcClient::new_from_static(OSMOSIS_GRPC_TESTNET)
+            .await
+            .unwrap();
 
         let _res = client.wasm_get_contracts_from_code_id(71).await.unwrap();
     }
@@ -294,7 +296,9 @@ mod test {
 
     #[tokio::test]
     pub async fn test_custom_query() {
-        let client = GrpcClient::new_from_static(OSMOSIS_GRPC).await.unwrap();
+        let client = GrpcClient::new_from_static(OSMOSIS_GRPC_TESTNET)
+            .await
+            .unwrap();
 
         let request = PoolRequest { pool_id: 1 };
 

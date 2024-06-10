@@ -1,13 +1,11 @@
 use enum_repr::EnumRepr;
+pub const LOCAL_NODE_GPRC: &str = "http://localhost:9090";
 
-#[allow(dead_code)]
-pub const TERRA_GRPC: &str = "http://terra-grpc.polkachu.com:11790";
-#[allow(dead_code)]
-pub const OSMOSIS_GRPC: &str = "https://osmosis-grpc.polkachu.com:12590";
-#[allow(dead_code)]
-pub const LOCAL_GPRC: &str = "http://localhost:9090";
-#[allow(dead_code)]
-pub const INJECTIVE_TESTNET_GRPC: &str = "https://injective-testnet-grpc.polkachu.com:14390";
+pub const OSMOSIS_GRPC_MAINNET: &str = "https://osmosis-grpc.polkachu.com:12590";
+pub const OSMOSIS_GRPC_TESTNET: &str = "https://osmosis-testnet-grpc.polkachu.com:12590";
+
+pub const INJECTIVE_GRPC_MAINNET: &str = "https://injective-grpc.polkachu.com:14390";
+pub const INJECTIVE_GRPC_TESTNET: &str = "https://injective-testnet-grpc.polkachu.com:14390";
 
 #[EnumRepr(type = "i32")]
 pub enum BroadcastMode {

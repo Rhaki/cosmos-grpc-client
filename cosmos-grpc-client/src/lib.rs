@@ -5,16 +5,24 @@ mod math;
 mod traits;
 mod wallet;
 
-pub use crate::client::GrpcClient;
-pub use crate::definitions::{BroadcastMode, CoinType};
-pub use cosmwasm_std::{Decimal, StdError, StdResult, Uint128};
-pub use traits::*;
-pub use wallet::Wallet;
-
-use anyhow::Result as AnyResult;
+pub use {
+    crate::client::GrpcClient,
+    crate::definitions::{BroadcastMode, CoinType, LOCAL_NODE_GPRC},
+    anyhow::Result as AnyResult,
+    cosmos_sdk_proto, cosmrs,
+    cosmwasm_std::{Decimal, StdError, StdResult, Uint128},
+    traits::*,
+    wallet::Wallet,
+};
 
 #[cfg(feature = "osmosis")]
-pub use osmosis_std;
+pub use {
+    crate::definitions::{OSMOSIS_GRPC_MAINNET, OSMOSIS_GRPC_TESTNET},
+    osmosis_std,
+};
 
-pub use cosmos_sdk_proto;
-pub use cosmrs;
+#[cfg(feature = "injective")]
+pub use {
+    crate::definitions::{INJECTIVE_GRPC_MAINNET, INJECTIVE_GRPC_TESTNET},
+    injective_protobuf,
+};

@@ -1,10 +1,4 @@
-use std::fmt::Display;
-
-use anyhow::anyhow;
-use cosmrs::Any;
-use prost::{Message, Name};
-
-use crate::AnyResult;
+use {crate::AnyResult, anyhow::anyhow, cosmrs::Any, std::fmt::Display};
 
 pub trait IntoSerdeSerialize: serde::Serialize {
     fn json_serialize(&self) -> AnyResult<Vec<u8>> {
@@ -58,6 +52,7 @@ pub trait SharedAny: Clone {
     fn into_any(self) -> prost_types::Any;
 }
 
+#[cfg(feature = "osmosis")]
 impl SharedAny for osmosis_std::shim::Any {
     fn into_any(self) -> prost_types::Any {
         prost_types::Any {
@@ -74,24 +69,25 @@ impl SharedAny for prost_types::Any {
 }
 
 /// Enable conversation of [`prost::Message`] type into [`prost_types::Any`].
-pub trait AnyBuilder {
-    fn build_any(self, type_url: impl Into<String>) -> prost_types::Any;
+pub trait ProstMsgToAny {
+    fn build_any_with_type_url(self, type_url: impl Into<String>) -> prost_types::Any;
 }
 
-impl<T: prost::Message> AnyBuilder for T {
-    fn build_any(self, type_url: impl Into<String>) -> prost_types::Any {
+impl<T: prost::Message> ProstMsgToAny for T {
+    fn build_any_with_type_url(self, type_url: impl Into<String>) -> prost_types::Any {
         let type_url = type_url.into();
         let value = self.encode_to_vec();
         prost_types::Any { type_url, value }
     }
 }
 
-pub trait IntoAny {
-    fn into_any(self) -> prost_types::Any;
+/// Enable conversation of [`prost::Message`] + [`prost::Name`] into [`prost_types::Any`].
+pub trait ProstMsgNameToAny {
+    fn build_any(self) -> prost_types::Any;
 }
 
-impl<T: Message + Name> IntoAny for T {
-    fn into_any(self) -> prost_types::Any {
+impl<T: prost::Message + prost::Name> ProstMsgNameToAny for T {
+    fn build_any(self) -> prost_types::Any {
         Any {
             type_url: Self::type_url(),
             value: self.encode_to_vec(),

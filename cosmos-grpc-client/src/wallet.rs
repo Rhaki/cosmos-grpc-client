@@ -1,46 +1,36 @@
-use std::{fmt::Debug, str::FromStr};
-
-use anyhow::anyhow;
-
-use bip39::Mnemonic;
-use cosmwasm_std::{Decimal, Uint128};
-
-use cosmos_sdk_proto::{
-    cosmos::{
-        auth::v1beta1::{BaseAccount, QueryAccountRequest},
-        tx::v1beta1::{
-            AuthInfo, BroadcastTxRequest, BroadcastTxResponse, SimulateRequest, SimulateResponse,
-            TxRaw,
-        },
+use {
+    crate::{
+        client::GrpcClient,
+        definitions::BroadcastMode,
+        math::{IntoU64, IntoUint128},
+        traits::{IntoAnyhowResult, OkOrAny, SharedAny},
+        AnyResult, CoinType,
     },
-    traits::MessageExt,
+    anyhow::anyhow,
+    bip32::secp256k1::{ecdsa::SigningKey, elliptic_curve::rand_core::OsRng},
+    bip39::Mnemonic,
+    cosmos_sdk_proto::{
+        cosmos::{
+            auth::v1beta1::{BaseAccount, QueryAccountRequest},
+            tx::v1beta1::{
+                AuthInfo, BroadcastTxRequest, BroadcastTxResponse, SimulateRequest,
+                SimulateResponse, TxRaw,
+            },
+        },
+        traits::MessageExt,
+    },
+    cosmrs::{
+        tx::{Fee, Raw, SignDoc, SignerInfo},
+        AccountId, Coin, Denom,
+    },
+    cosmwasm_std::{Decimal, Uint128},
+    injective_protobuf::proto::account::EthAccount,
+    prost::Message as ProstMessage,
+    prost_types::Any,
+    protobuf::Message as ProtoMessage,
+    sha3::{Digest, Keccak256},
+    std::{fmt::Debug, str::FromStr},
 };
-use ethers::utils::keccak256;
-use injective_protobuf::proto::account::EthAccount;
-use k256::{ecdsa::SigningKey, elliptic_curve::rand_core::OsRng};
-use prost::Message as ProstMessage;
-use sha3::Digest;
-
-use crate::{
-    client::GrpcClient,
-    definitions::BroadcastMode,
-    math::{IntoU64, IntoUint128},
-    traits::{IntoAnyhowResult, OkOrAny, SharedAny},
-    CoinType,
-};
-
-use crate::AnyResult;
-use cosmrs::{
-    // crypto::secp256k1::SigningKey,
-    tx::{Fee, Raw, SignDoc, SignerInfo},
-    AccountId,
-    Coin,
-    Denom,
-};
-use prost_types::Any;
-
-use protobuf::Message as ProtoMessage;
-
 #[non_exhaustive]
 pub struct Wallet {
     coin_type: CoinType,
@@ -238,7 +228,10 @@ impl Wallet {
             CoinType::Injective => {
                 let pk = sign_key.verifying_key();
                 let uncompressed_bytes = pk.to_encoded_point(false).to_bytes();
-                let address_bytes = keccak256(&uncompressed_bytes[1..]);
+
+                let mut hasher = Keccak256::new();
+                hasher.update(&uncompressed_bytes[1..]);
+                let address_bytes = hasher.finalize();
                 AccountId::new("inj", &address_bytes[12..])
                     .unwrap()
                     .to_string()
@@ -314,10 +307,11 @@ impl Wallet {
             .memo(memo.unwrap_or("".to_string()))
             .finish();
 
-        let sk = cosmrs::crypto::secp256k1::SigningKey::new(Box::new(self.sign_key.clone()));
-
-        let auth_info =
-            SignerInfo::single_direct(Some(sk.public_key()), self.account_sequence).auth_info(fee);
+        let auth_info = SignerInfo::single_direct(
+            Some(self.sign_key.verifying_key().into()),
+            self.account_sequence,
+        )
+        .auth_info(fee);
 
         let mut sign_doc = SignDoc::new(
             &tx_body,
@@ -331,8 +325,8 @@ impl Wallet {
             CoinType::Injective => {
                 let mut auth_info = AuthInfo::decode(sign_doc.auth_info_bytes.as_slice()).unwrap();
 
-                for i in auth_info.signer_infos.iter_mut() {
-                    i.public_key.as_mut().unwrap().type_url =
+                for signer_info in auth_info.signer_infos.iter_mut() {
+                    signer_info.public_key.as_mut().unwrap().type_url =
                         "/injective.crypto.v1beta1.ethsecp256k1.PubKey".to_string()
                 }
 
@@ -342,18 +336,20 @@ impl Wallet {
 
                 let digest = sha3::Keccak256::new_with_prefix(data);
 
-                let (b, c) = self.sign_key.sign_digest_recoverable(digest.clone()).unwrap();
+                let (sign, _) = self.sign_key.sign_digest_recoverable(digest.clone())?;
 
                 Ok(TxRaw {
                     body_bytes: sign_doc.body_bytes,
                     auth_info_bytes: sign_doc.auth_info_bytes,
-                    signatures: vec![b.to_vec()],
+                    signatures: vec![sign.to_vec()],
                 }
                 .into())
-
-                // unimplemented!("Injective not implemented")
             }
-            _ => sign_doc.sign(&sk).into_anyresult(),
+            _ => sign_doc
+                .sign(&cosmrs::crypto::secp256k1::SigningKey::new(Box::new(
+                    self.sign_key.clone(),
+                )))
+                .into_anyresult(),
         }
     }
 }
@@ -374,22 +370,25 @@ impl Debug for Wallet {
 }
 
 #[cfg(test)]
+#[cfg(feature = "injective")]
 mod test {
+    use cosmos_sdk_proto::cosmos::{bank::v1beta1::MsgSend, base::v1beta1::Coin};
     use cosmwasm_std::Decimal;
-    use osmosis_std::types::cosmos::{bank::v1beta1::MsgSend, base::v1beta1::Coin};
     use std::str::FromStr;
 
     use crate::{
-        definitions::{INJECTIVE_TESTNET_GRPC, TERRA_GRPC},
-        traits::AnyBuilder,
-        CoinType, GrpcClient, Wallet,
+        definitions::{INJECTIVE_GRPC_TESTNET, OSMOSIS_GRPC_TESTNET},
+        traits::ProstMsgToAny,
+        CoinType, GrpcClient, ProstMsgNameToAny, Wallet,
     };
 
     #[tokio::test]
     async fn create_wallet() {
         let seed_phrase = "...";
 
-        let client = GrpcClient::new_from_static(TERRA_GRPC).await.unwrap();
+        let client = GrpcClient::new_from_static(OSMOSIS_GRPC_TESTNET)
+            .await
+            .unwrap();
 
         let wallet = Wallet::from_seed_phrase(
             client.clone(),
@@ -413,7 +412,7 @@ mod test {
             }],
         };
 
-        wallet.simulate_tx(vec![msg.to_any()]).await.unwrap();
+        wallet.simulate_tx(vec![msg.build_any()]).await.unwrap();
 
         let msg = cosmos_sdk_proto::cosmos::bank::v1beta1::MsgSend {
             from_address: wallet.account_address.clone(),
@@ -425,14 +424,16 @@ mod test {
         };
 
         wallet
-            .simulate_tx(vec![msg.build_any("type_url")])
+            .simulate_tx(vec![msg.build_any_with_type_url("type_url")])
             .await
             .unwrap();
     }
 
     #[tokio::test]
     async fn ranom_wallet() {
-        let client = GrpcClient::new_from_static(TERRA_GRPC).await.unwrap();
+        let client = GrpcClient::new_from_static(OSMOSIS_GRPC_TESTNET)
+            .await
+            .unwrap();
 
         let wallet = Wallet::random(
             client,
@@ -452,7 +453,7 @@ mod test {
     async fn injective() {
         let seed = "...";
 
-        let client = GrpcClient::new_from_static(INJECTIVE_TESTNET_GRPC)
+        let client = GrpcClient::new_from_static(INJECTIVE_GRPC_TESTNET)
             .await
             .unwrap();
 
@@ -482,18 +483,15 @@ mod test {
         };
 
         let sim = wallet
-            .broadcast_tx(vec![msg.to_any()], None, None, crate::BroadcastMode::Sync)
+            .broadcast_tx(
+                vec![msg.build_any()],
+                None,
+                None,
+                crate::BroadcastMode::Sync,
+            )
             .await
             .unwrap();
 
         println!("{sim:#?}")
-
-        // let tx = wallet
-        //     .create_tx(
-        //         vec![msg.to_any()],
-        //         Fee::from_amount_and_gas(cosmrs::Coin::new(100, "inj").unwrap(), 100000_u64),
-        //         None,
-        //     )
-        //     .unwrap();
     }
 }
