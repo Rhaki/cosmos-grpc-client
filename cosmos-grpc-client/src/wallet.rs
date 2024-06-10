@@ -8,12 +8,18 @@ use cosmwasm_std::{Decimal, Uint128};
 use cosmos_sdk_proto::{
     cosmos::{
         auth::v1beta1::{BaseAccount, QueryAccountRequest},
-        tx::v1beta1::{BroadcastTxRequest, BroadcastTxResponse},
-        tx::v1beta1::{SimulateRequest, SimulateResponse},
+        tx::v1beta1::{
+            AuthInfo, BroadcastTxRequest, BroadcastTxResponse, SimulateRequest, SimulateResponse,
+            TxRaw,
+        },
     },
     traits::MessageExt,
 };
-use prost::Message;
+use ethers::utils::keccak256;
+use injective_protobuf::proto::account::EthAccount;
+use k256::{ecdsa::SigningKey, elliptic_curve::rand_core::OsRng};
+use prost::Message as ProstMessage;
+use sha3::Digest;
 
 use crate::{
     client::GrpcClient,
@@ -25,15 +31,21 @@ use crate::{
 
 use crate::AnyResult;
 use cosmrs::{
-    crypto::secp256k1::SigningKey,
+    // crypto::secp256k1::SigningKey,
     tx::{Fee, Raw, SignDoc, SignerInfo},
-    Coin, Denom,
+    AccountId,
+    Coin,
+    Denom,
 };
 use prost_types::Any;
 
+use protobuf::Message as ProtoMessage;
+
 #[non_exhaustive]
 pub struct Wallet {
-    sign_key: SigningKey,
+    coin_type: CoinType,
+    pub account_address: String,
+    pub sign_key: SigningKey,
     pub client: GrpcClient,
     pub chain_id: String,
     pub prefix: String,
@@ -54,7 +66,7 @@ impl Wallet {
         gas_adjustment: Decimal,
         gas_denom: impl Into<String>,
     ) -> AnyResult<Wallet> {
-        let sign_key = SigningKey::random();
+        let sign_key = SigningKey::random(&mut OsRng);
 
         Wallet::finalize_wallet_creation(
             client,
@@ -114,7 +126,10 @@ impl Wallet {
             "m/44'/{}'/0'/0/{account_index}",
             coin_type.clone().into()
         ))?;
-        let sign_key = SigningKey::derive_from_path(seed, &derivation_path)?;
+        let sign_key = bip32::XPrv::derive_from_path(seed, &derivation_path)
+            .unwrap()
+            .private_key()
+            .clone();
 
         Wallet::finalize_wallet_creation(
             client,
@@ -126,15 +141,6 @@ impl Wallet {
             gas_denom,
         )
         .await
-    }
-
-    pub fn account_address(&self) -> AnyResult<String> {
-        Ok(self
-            .sign_key
-            .public_key()
-            .account_id(&self.prefix)
-            .into_anyresult()?
-            .into())
     }
 
     pub async fn broadcast_tx(
@@ -225,33 +231,47 @@ impl Wallet {
         gas_adjustment: Decimal,
         gas_denom: impl Into<String>,
     ) -> AnyResult<Wallet> {
+        let coin_type =
+            CoinType::from_repr(coin_type.into()).ok_or(anyhow!("Invalid coin type"))?;
+
+        let account_address = match coin_type {
+            CoinType::Injective => {
+                let pk = sign_key.verifying_key();
+                let uncompressed_bytes = pk.to_encoded_point(false).to_bytes();
+                let address_bytes = keccak256(&uncompressed_bytes[1..]);
+                AccountId::new("inj", &address_bytes[12..])
+                    .unwrap()
+                    .to_string()
+            }
+            _ => cosmrs::crypto::secp256k1::SigningKey::new(Box::new(sign_key.clone()))
+                .public_key()
+                .account_id(&chain_prefix.clone().into())
+                .into_anyresult()?
+                .to_string(),
+        };
         let raw_res = client
             .clients
             .auth
             .clone()
             .account(QueryAccountRequest {
-                address: sign_key
-                    .public_key()
-                    .account_id(&chain_prefix.clone().into())
-                    .into_anyresult()?
-                    .to_string(),
+                address: account_address.clone(),
             })
             .await
             .map(|res| res.into_inner());
 
         let (number, sequence) = match raw_res {
             #[allow(clippy::match_single_binding)]
-            Ok(raw_res) => match CoinType::from_repr(coin_type.into()) {
-                // Some(CoinType::Injective) => EthAccount::parse_from_bytes(
-                //     raw_res
-                //         .account
-                //         .ok_or_any("Error unwrapping None in raw_res.account")?
-                //         .value
-                //         .as_slice(),
-                // )?
-                // .base_account
-                // .map(|res| (res.account_number, res.sequence))
-                // .unwrap_or((0, 0)),
+            Ok(raw_res) => match coin_type {
+                CoinType::Injective => EthAccount::parse_from_bytes(
+                    raw_res
+                        .account
+                        .ok_or_any("Error unwrapping None in raw_res.account")?
+                        .value
+                        .as_slice(),
+                )?
+                .base_account
+                .map(|res| (res.account_number, res.sequence))
+                .unwrap_or((0, 0)),
                 _ => BaseAccount::decode(
                     &raw_res
                         .account
@@ -265,6 +285,8 @@ impl Wallet {
         };
 
         Ok(Wallet {
+            account_address,
+            coin_type,
             client: client.clone(),
             chain_id: client.chain_id.clone(),
             prefix: chain_prefix.into(),
@@ -277,7 +299,7 @@ impl Wallet {
         })
     }
 
-    fn create_tx(
+    pub fn create_tx(
         &self,
         msgs: Vec<impl SharedAny>,
         fee: Fee,
@@ -292,25 +314,54 @@ impl Wallet {
             .memo(memo.unwrap_or("".to_string()))
             .finish();
 
-        let auth_info =
-            SignerInfo::single_direct(Some(self.sign_key.public_key()), self.account_sequence)
-                .auth_info(fee);
+        let sk = cosmrs::crypto::secp256k1::SigningKey::new(Box::new(self.sign_key.clone()));
 
-        let sign_doc = SignDoc::new(
+        let auth_info =
+            SignerInfo::single_direct(Some(sk.public_key()), self.account_sequence).auth_info(fee);
+
+        let mut sign_doc = SignDoc::new(
             &tx_body,
             &auth_info,
             &self.chain_id.parse()?,
             self.account_number,
         )
         .into_anyresult()?;
-        sign_doc.sign(&self.sign_key).into_anyresult()
+
+        match self.coin_type {
+            CoinType::Injective => {
+                let mut auth_info = AuthInfo::decode(sign_doc.auth_info_bytes.as_slice()).unwrap();
+
+                for i in auth_info.signer_infos.iter_mut() {
+                    i.public_key.as_mut().unwrap().type_url =
+                        "/injective.crypto.v1beta1.ethsecp256k1.PubKey".to_string()
+                }
+
+                sign_doc.auth_info_bytes = auth_info.encode_to_vec();
+
+                let data = sign_doc.clone().into_bytes().unwrap();
+
+                let digest = sha3::Keccak256::new_with_prefix(data);
+
+                let (b, c) = self.sign_key.sign_digest_recoverable(digest.clone()).unwrap();
+
+                Ok(TxRaw {
+                    body_bytes: sign_doc.body_bytes,
+                    auth_info_bytes: sign_doc.auth_info_bytes,
+                    signatures: vec![b.to_vec()],
+                }
+                .into())
+
+                // unimplemented!("Injective not implemented")
+            }
+            _ => sign_doc.sign(&sk).into_anyresult(),
+        }
     }
 }
 
 impl Debug for Wallet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Wallet")
-            .field("account_address", &self.account_address())
+            .field("account_address", &self.account_address)
             .field("chain_id", &self.chain_id)
             .field("prefix", &self.prefix)
             .field("account_number", &self.account_number)
@@ -324,12 +375,15 @@ impl Debug for Wallet {
 
 #[cfg(test)]
 mod test {
-    use std::str::FromStr;
-
     use cosmwasm_std::Decimal;
     use osmosis_std::types::cosmos::{bank::v1beta1::MsgSend, base::v1beta1::Coin};
+    use std::str::FromStr;
 
-    use crate::{definitions::TERRA_GRPC, traits::AnyBuilder, CoinType, GrpcClient, Wallet};
+    use crate::{
+        definitions::{INJECTIVE_TESTNET_GRPC, TERRA_GRPC},
+        traits::AnyBuilder,
+        CoinType, GrpcClient, Wallet,
+    };
 
     #[tokio::test]
     async fn create_wallet() {
@@ -351,7 +405,7 @@ mod test {
         .unwrap();
 
         let msg = MsgSend {
-            from_address: wallet.account_address().unwrap(),
+            from_address: wallet.account_address.clone(),
             to_address: "...".to_string(),
             amount: vec![Coin {
                 denom: "uluna".to_string(),
@@ -362,7 +416,7 @@ mod test {
         wallet.simulate_tx(vec![msg.to_any()]).await.unwrap();
 
         let msg = cosmos_sdk_proto::cosmos::bank::v1beta1::MsgSend {
-            from_address: wallet.account_address().unwrap(),
+            from_address: wallet.account_address.clone(),
             to_address: "...".to_string(),
             amount: vec![cosmos_sdk_proto::cosmos::base::v1beta1::Coin {
                 denom: "uluna".to_string(),
@@ -392,5 +446,54 @@ mod test {
         .unwrap();
 
         println!("{wallet:#?}");
+    }
+
+    #[tokio::test]
+    async fn injective() {
+        let seed = "...";
+
+        let client = GrpcClient::new_from_static(INJECTIVE_TESTNET_GRPC)
+            .await
+            .unwrap();
+
+        let mut wallet = Wallet::from_seed_phrase(
+            client.clone(),
+            seed,
+            "inj",
+            CoinType::Injective,
+            0,
+            Decimal::from_str("700000000").unwrap(),
+            Decimal::from_str("1.5").unwrap(),
+            "inj",
+        )
+        .await
+        .unwrap();
+
+        let acc_address = wallet.account_address.clone();
+        println!("{acc_address:#?}");
+
+        let msg = MsgSend {
+            from_address: acc_address,
+            to_address: "inj1j6kf3tn0h52lmfapc3y9gzjaqvz5gdm8dwsuha".to_string(),
+            amount: vec![Coin {
+                denom: "inj".to_string(),
+                amount: "1000000000000000000".to_string(),
+            }],
+        };
+
+        let sim = wallet
+            .broadcast_tx(vec![msg.to_any()], None, None, crate::BroadcastMode::Sync)
+            .await
+            .unwrap();
+
+        println!("{sim:#?}")
+
+        // let tx = wallet
+        //     .create_tx(
+        //         vec![msg.to_any()],
+        //         Fee::from_amount_and_gas(cosmrs::Coin::new(100, "inj").unwrap(), 100000_u64),
+        //         None,
+        //     )
+        //     .unwrap();
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name               = "cosmos-grpc-client"
-version            = "2.0.2"
+version            = "3.0.0"
 edition            = "2021"
 authors            = ["Rhaki"]
 description        = "Cosmos grpc client with wallet integration"
@@ -38,3 +38,7 @@ injective-protobuf = {workspace=true}
 
 protobuf           = {workspace=true}
 
+hex                = "0.4.3"
+k256               = "0.13.3"
+sha3               = "0.10.8"
+ethers             = "2.0.14"

@@ -6,6 +6,8 @@ pub const TERRA_GRPC: &str = "http://terra-grpc.polkachu.com:11790";
 pub const OSMOSIS_GRPC: &str = "https://osmosis-grpc.polkachu.com:12590";
 #[allow(dead_code)]
 pub const LOCAL_GPRC: &str = "http://localhost:9090";
+#[allow(dead_code)]
+pub const INJECTIVE_TESTNET_GRPC: &str = "https://injective-testnet-grpc.polkachu.com:14390";
 
 #[EnumRepr(type = "i32")]
 pub enum BroadcastMode {

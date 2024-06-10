@@ -27,8 +27,7 @@ enum-repr          = "0.2.6"
 osmosis-std        = "0.24.0"
 osmosis-std-derive = "0.20.1"
 
-injective-protobuf = "0.2.2"
-protobuf           = "3.4.0"
-
+injective-protobuf = "=0.2.2"
+protobuf           = "2.28.0"
 
 
