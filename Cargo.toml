@@ -1,5 +1,5 @@
 [workspace]
-members            = ["cosmos-grpc-client", "mock_test"]
+members            = ["cosmos-grpc-client"]
 
 [workspace.dependencies]
 anyhow             = "1.0.81"
